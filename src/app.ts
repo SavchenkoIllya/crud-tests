@@ -1,10 +1,24 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors, { CorsOptions } from 'cors';
 import dotenv from 'dotenv';
-import { drizzleQueryMiddleware, subjectQuerySchema } from './utils/index.js';
-import { subjects } from './schema.js';
-import { eq } from 'drizzle-orm';
-import qs from 'qs';
+// import { drizzleQueryMiddleware, subjectQuerySchema } from './utils/index.js';
+// import { subjects } from './schema.js';
+import { ParsedQs } from 'qs';
+import {
+  and,
+  eq,
+  gt,
+  gte,
+  lt,
+  lte,
+  ne,
+  or,
+  inArray,
+  notInArray,
+  is,
+  like,
+  ilike,
+} from 'drizzle-orm';
 
 // Load environment variables from .env if present
 dotenv.config();
@@ -13,8 +27,6 @@ const app = express();
 
 // Parse JSON bodies
 app.use(express.json());
-
-app.set('query parser', 'extended');
 
 // CORS configuration
 // Configure allowed origins via env: ALLOWED_ORIGINS as comma-separated list
@@ -44,73 +56,125 @@ const corsOptions: CorsOptions = {
   credentials: true,
 };
 
+type ParsedQueryForRequest = {
+  columns?: {
+    [key: string]: true;
+  };
+  with?: {
+    [key: string]:
+      | {
+          columns?: {
+            [key: string]: true;
+          };
+        }
+      | true;
+  };
+  where?: string;
+};
+
 app.use(cors(corsOptions));
 
-// A simple test route
-app.get(
-  '/health',
-  drizzleQueryMiddleware(subjectQuerySchema),
-  async (req: Request, res: Response) => {
-    try {
-      // const query = req.query;
-      const testObject = {
-        columns: {
-          id: true,
-          name: true,
-        },
+const mapQueryOperators = {
+  select: 'columns',
+  filter: 'where',
+};
+
+const mapLogicOperators = {
+  and: and,
+  or: or,
+};
+
+const mapComparisonOperators = {
+  eq: eq,
+  ne: ne,
+  gt: gt,
+  gte: gte,
+  lt: lt,
+  lte: lte,
+  in: inArray,
+  nin: notInArray,
+  is: is,
+  like: like,
+  ilike: ilike,
+};
+
+const processSelectFn = (values: string): any =>
+  values.split(',').reduce((acc, val) => {
+    if (val.includes('.')) {
+      const [table, column] = val.split('.');
+      acc[table] = { [column]: true };
+      return acc;
+    }
+
+    if (val.includes('(*)')) {
+      acc = {
+        ...acc,
         with: {
-          department: {
-            columns: {
-              id: true,
-              name: true,
-              description: true,
-            },
-          },
-        },
-        where: {
-          id: {
-            eq: 1,
-          },
+          [val.replace('(*)', '')]: true,
         },
       };
-
-      console.log(qs.stringify(testObject, { encode: false }));
-      // console.log(query)
-
-      // const testData = await db
-      //   .select()
-      //   .from(subjects)
-      //   .then((data) => Object.groupBy(data, ({ departmentId }) => departmentId));
-
-      // const data = await db.query.subjects
-      //   .findMany({
-      //     columns: {
-      //       id: true,
-      //       name: true,
-      //     },
-      //     with: {
-      //       department: {
-      //         columns: {
-      //           id: true,
-      //           name: true,
-      //           description: true,
-      //         },
-      //       },
-      //     },
-      //     where: eq(subjects.id, 1),
-      //   })
-      //   .then((data) => Object.groupBy(data, ({ department }) => department.name));
-
-      res.status(200);
-      // .json(data);
-    } catch (e) {
-      console.log(e);
-
-      const message = e instanceof Error ? e.message : 'Query failed';
-      res.status(500).json({ error: message });
+      return acc;
     }
-  },
-);
+
+    acc[val] = true;
+    return acc;
+  }, {});
+
+const parseFilterFn = (values: string) => {
+  const [_, operator, value] = values.match(/^(\w+)\((.*)\)$/) ?? [undefined, undefined, undefined];
+
+  if (!operator || !value) return;
+
+  const mappedOperator = mapLogicOperators[operator];
+
+  if (!mappedOperator) return;
+
+  return { [operator]: value };
+};
+
+const mapOperatorsActions = {
+  columns: processSelectFn,
+  where: parseFilterFn,
+};
+
+const queryParserConfig = {
+  depth: 2,
+};
+
+const parser = (query?: ParsedQs) => {
+  let result = {};
+
+  if (!query || Object.keys(query).length === 0) return result;
+
+  Object.entries(query).forEach(([key, value]) => {
+    if (!value || !key) return;
+    const mappedKey = mapQueryOperators[key];
+
+    if (!mappedKey) return;
+
+    const parsed = mapOperatorsActions[mappedKey](value);
+
+    result = { ...result, [mappedKey]: parsed };
+  });
+
+  return result;
+};
+
+// A simple test route
+app.get('/health', async (req: Request, res: Response) => {
+  try {
+    const parsedQuery = req.query;
+
+    const responseData = parser(parsedQuery);
+
+    res.status(200).json(responseData);
+  } catch (e) {
+    console.error(e);
+
+    const message = e instanceof Error ? e.message : 'Query failed';
+    res.status(500).json({ error: message });
+  }
+});
 
 // 404 handler
 app.use((req: Request, res: Response) => {
