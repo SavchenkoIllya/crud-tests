@@ -1,0 +1,14 @@
+# Folders
+node_modules
+.dist
+dist
+.drizzle
+.drizzle-kit
+drizzle
+# Build artifacts
+coverage
+*.tsbuildinfo
+# Generated files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
