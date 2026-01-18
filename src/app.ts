@@ -1,25 +1,9 @@
 import express, { Request, Response, NextFunction } from 'express';
 import cors, { CorsOptions } from 'cors';
 import dotenv from 'dotenv';
-// import { drizzleQueryMiddleware, subjectQuerySchema } from './utils/index.js';
-// import { subjects } from './schema.js';
-import { ParsedQs } from 'qs';
-import {
-  and,
-  eq,
-  gt,
-  gte,
-  lt,
-  lte,
-  ne,
-  or,
-  inArray,
-  notInArray,
-  is,
-  like,
-  ilike,
-} from 'drizzle-orm';
 import { parser } from './utils/index.ts';
+import { db } from './db.ts';
+import { subjects } from './schema.ts';
 
 // Load environment variables from .env if present
 dotenv.config();
@@ -80,9 +64,11 @@ app.get('/health', async (req: Request, res: Response) => {
   try {
     const parsedQuery = req.query;
 
-    const responseData = parser(parsedQuery);
+    const responseData = parser(parsedQuery, subjects);
 
-    res.status(200).json(responseData);
+    const data = await db.query.subjects.findMany(responseData);
+
+    res.status(200).json(data);
   } catch (e) {
     console.error(e);
 
